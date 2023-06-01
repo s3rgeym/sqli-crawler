@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "sqli-crawler"
+version = "0.9.5"
+description = ""
+authors = ["Senior YAML Developer <yamldeveloper@proton.me>"]
+readme = "README.md"
+packages = [{include = "sqli_crawler"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+pyppeteer = "^1.0.2"
+aiohttp = "^3.8.4"
+aiodns = "^3.0.0"
+
+
+[tool.poetry.group.dev.dependencies]
+black = "^23.3.0"
+pylint = "^2.17.4"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+sqli-Crawler = 'sqli_crawler.Crawler:SQLiCrawler.start'

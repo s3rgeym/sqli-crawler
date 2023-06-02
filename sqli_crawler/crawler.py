@@ -3,7 +3,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
-import json
+import itertools
+import json as jsonlib
 import logging
 import re
 import typing as typ
@@ -70,11 +71,12 @@ class SQLiCrawler:
 
     input: typ.TextIO
     output: typ.TextIO
+    checks_per_url: int
     crawl_depth: int
     crawl_per_host: int
-    crawlers: int
-    sqli_checkers: int
     executable_path: str | Path | None
+    num_checkers: int
+    num_crawlers: int
     show_browser: bool
     verbosity: int
 
@@ -232,20 +234,23 @@ class SQLiCrawler:
         async with aiohttp.ClientSession(timeout=tim) as client:
             yield client
 
-    def inject(
+    def inject_values(
         self,
         params: dict | None,
         data: dict | None,
         json: dict | None,
-    ) -> typ.Iterator[tuple[dict | None, dict | None, dict | None]]:
+        cookies: dict | None,
+    ) -> typ.Iterator[
+        tuple[dict | None, dict | None, dict | None, dict | None]
+    ]:
         for i in params or ():
             cp = params.copy()
             cp[i] += QUOTES
-            yield cp, data, json
+            yield cp, data, json, cookies
         for i in data or ():
             cp = data.copy()
             cp[i] += QUOTES
-            yield params, cp, json
+            yield params, cp, json, cookies
         for k, v in (json or {}).items():
             if isinstance(v, (int, float, bool)):
                 v = str(v).lower()
@@ -253,7 +258,11 @@ class SQLiCrawler:
                 continue
             cp = json.copy()
             cp[k] = v + QUOTES
-            yield params, data, cp
+            yield params, data, cp, cookies
+        for i in cookies or "":
+            cp = cookies.copy()
+            cp[i] += QUOTES
+            yield params, data, json, cp
 
     def hash_request(
         self,
@@ -262,13 +271,17 @@ class SQLiCrawler:
         params: dict | None,
         data: dict | None,
         json: dict | None,
+        cookies: dict,
     ) -> str:
-        # POST|https://www.linux.org.ru/ajax_login_process||nick,csrf,passwd|
+        # POST|https://www.linux.org.ru/ajax_login_process||csrf,nick,passwd||CSRF_TOKEN,JSESSIONID,tz
         return "|".join(
             [
                 method,
                 url,
-                *(",".join(set(x or {})) for x in [params, data, json]),
+                *(
+                    ",".join(set(x or {}))
+                    for x in [params, data, json, cookies]
+                ),
             ]
         )
 
@@ -288,11 +301,11 @@ class SQLiCrawler:
                 method, url, headers, cookies, data = await check_queue.get()
 
                 try:
-                    params = json_data = None
+                    params = json = None
 
                     if data:
                         try:
-                            data, json_data = parse_payload(
+                            data, json = parse_payload(
                                 data, headers.pop("content-type")
                             )
                         except ValueError as ex:
@@ -307,7 +320,7 @@ class SQLiCrawler:
 
                     # Уменьшаем количество запросов
                     req_hash = self.hash_request(
-                        method, url, params, data, json_data
+                        method, url, params, data, json, cookies
                     )
 
                     if req_hash in checked_hashes:
@@ -316,12 +329,18 @@ class SQLiCrawler:
 
                     checked_hashes.add(req_hash)
 
-                    # Проверяем каждый переданный параметр
-                    for params, data, json_data in self.inject(
-                        params, data, json_data
-                    ):
+                    injected_gen = self.inject_values(
+                        params, data, json, cookies
+                    )
+
+                    if self.checks_per_url > 0:
+                        injected_gen = itertools.islice(
+                            injected_gen, 0, self.checks_per_url
+                        )
+
+                    for params, data, json, cookies in injected_gen:
                         self.log.debug(
-                            f"check sqli: [{method}] {url}; {params=}, {data=}, json={json_data}"
+                            f"check sqli: {method=}, {url=}, {params=}, {data=}, {cookies}"
                         )
 
                         response: ClientResponse = await http_client.request(
@@ -329,7 +348,7 @@ class SQLiCrawler:
                             url,
                             params=params,
                             data=data,
-                            json=json_data,
+                            json=json,
                             cookies=cookies,
                             headers=headers,
                         )
@@ -345,12 +364,12 @@ class SQLiCrawler:
                             "status_code": response.status,
                             "params": params,
                             "data": data,
-                            "json": json_data,
+                            "json": json,
                             "cookies": cookies,
                             "headers": headers,
                             "match": match[0],
                         }
-                        js = json.dumps(
+                        js = jsonlib.dumps(
                             # Удаляем null
                             {k: v for k, v in res.items() if v is not None},
                             ensure_ascii=False,
@@ -398,19 +417,19 @@ class SQLiCrawler:
                     check_queue,
                 )
             )
-            for _ in range(self.crawlers)
+            for _ in range(self.num_crawlers)
         ]
 
         checked_hashes: set[str] = set()
 
-        sqli_checkers = [
+        checkers = [
             asyncio.create_task(
                 self.check_sqli(
                     check_queue,
                     checked_hashes,
                 )
             )
-            for _ in range(self.sqli_checkers)
+            for _ in range(self.num_checkers)
         ]
 
         await crawl_queue.join()
@@ -423,7 +442,7 @@ class SQLiCrawler:
 
         await check_queue.join()
 
-        for t in sqli_checkers:
+        for t in checkers:
             t.cancel()
 
         self.log.info("seen urls: %d", len(seen_urls))
@@ -460,20 +479,26 @@ class SQLiCrawler:
             default=120,
         )
         parser.add_argument(
-            "--crawlers",
+            "--num-crawlers",
             help="number of crawlers",
             type=int,
             default=30,
         )
         parser.add_argument(
-            "--sqli-checkers",
+            "--num-checkers",
             help="number of sqli checkers",
             type=int,
             default=10,
         )
         parser.add_argument(
+            "--checks-per-url",
+            help="max number of sqli checks per url (no limit = -1)",
+            type=int,
+            default=-1,
+        )
+        parser.add_argument(
             "--executable-path",
-            help="chrome-like browser executable path. Use environment variable `CHROME_EXECUTABLE_PATH` instead",
+            help="chrome-like browser executable path. use environment variable `CHROME_EXECUTABLE_PATH` instead",
             type=Path,
         )
         parser.add_argument(

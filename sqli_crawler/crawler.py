@@ -71,7 +71,7 @@ class SQLiCrawler:
 
     input: typ.TextIO
     output: typ.TextIO
-    checks_per_url: int
+    checks_per_resource: int
     crawl_depth: int
     crawl_per_host: int
     executable_path: str | Path | None
@@ -334,8 +334,10 @@ class SQLiCrawler:
                     )
 
                     for params, data, json, cookies in (
-                        itertools.islice(injected_gen, 0, self.checks_per_url)
-                        if self.checks_per_url > 0
+                        itertools.islice(
+                            injected_gen, 0, self.checks_per_resource
+                        )
+                        if self.checks_per_resource > 0
                         else injected_gen
                     ):
                         self.log.debug(
@@ -490,8 +492,8 @@ class SQLiCrawler:
             default=10,
         )
         parser.add_argument(
-            "--checks-per-url",
-            help="max number of sqli checks per url (no limit = -1)",
+            "--checks-per-resource",
+            help="max number of sqli checks per resource (no limit = -1)",
             type=int,
             default=-1,
         )

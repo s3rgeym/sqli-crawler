@@ -113,16 +113,9 @@ class SQLiCrawler:
         page: Page,
         check_queue: asyncio.Queue[RequestInfo],
     ) -> None:
-        # req.frame.parentFrame is None
-        # req.resourceType
-        # req.isNavigationRequest()
-        # req.method
-        # req.url
-        # req.headers
-        # req.postData
-        # Отключаем картинки для ускорения
-        # https://stackoverflow.com/questions/43405952/is-there-any-way-to-get-all-mime-type-by-the-resourcetype-of-chrome/47166602#47166602
         try:
+            # Отключаем картинки для ускорения
+            # https://stackoverflow.com/questions/43405952/is-there-any-way-to-get-all-mime-type-by-the-resourcetype-of-chrome/47166602#47166602
             if req.resourceType == "image" or req.url.endswith(".ico"):
                 await req.abort()
                 return

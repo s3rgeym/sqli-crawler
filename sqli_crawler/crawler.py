@@ -138,7 +138,7 @@ class SQLiCrawler:
 
             if (
                 req.resourceType in ("xhr", "fetch", "document", "other")
-                and ((req.method == "GET" and "?" in req.url) or req.postData)
+                and (req.postData or "?" in req.url)
                 and urlsplit(page.url).netloc == urlsplit(req.url).netloc
             ):
                 cookies = await page.cookies(req.url)

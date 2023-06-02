@@ -137,15 +137,16 @@ class SQLiCrawler:
             # }
 
             if (
-                req.resourceType in ("xhr", "fetch", "document", "other")
+                req.resourceType in ("document", "xhr", "fetch", "other")
                 and (req.postData or "?" in req.url)
                 and urlsplit(page.url).netloc == urlsplit(req.url).netloc
             ):
-                cookies = await page.cookies(req.url)
+                url, _ = urldefrag(req.url)
+                cookies = await page.cookies(url)
                 await check_queue.put(
                     RequestInfo(
-                        req.method,
-                        req.url,
+                        req.method.upper(),
+                        url,
                         req.headers.copy(),
                         {c["name"]: c["value"] for c in cookies},
                         req.postData,
@@ -281,7 +282,6 @@ class SQLiCrawler:
             while True:
                 method, url, headers, cookies, data = await check_queue.get()
                 try:
-                    url, _ = urldefrag(url)
                     params = files = json_data = None
                     if data:
                         try:
@@ -337,6 +337,7 @@ class SQLiCrawler:
                         res = {
                             "method": method,
                             "url": url,
+                            "status_code": response.status,
                             "params": params,
                             "data": data,
                             "files": files

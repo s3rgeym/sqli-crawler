@@ -265,6 +265,24 @@ class SQLiCrawler:
             ]
         )
 
+    def get_form_data(
+        self,
+        data: dict | None,
+        files: dict | None,
+    ) -> aiohttp.FormData | None:
+        if not data and not files:
+            return
+        fd = aiohttp.FormData()
+        for name, value in (data or {}).items():
+            fd.add_field(name, value)
+        for name, value in (files or {}).items():
+            if hasattr(value, "__iter__"):
+                value, filename = value
+            else:
+                filename = None
+            fd.add_field(name, value, filename=filename)
+        return fd
+
     async def check_sqli(
         self, check_queue: asyncio.Queue[RequestInfo], checked_hashes: set[str]
     ) -> None:
@@ -302,18 +320,11 @@ class SQLiCrawler:
                             f"check sqli: [{method}] {url}; {params=}, {data=}, {files=}, json={json_data}"
                         )
 
-                        if files:
-                            fd = aiohttp.FormData()
-                            for k, v in {**(data or {}), **files}.items():
-                                fd.add_field(k, v)
-                        else:
-                            fd = data
-
                         response: ClientResponse = await http_client.request(
                             method,
                             url,
                             params=params,
-                            data=fd,
+                            data=self.get_form_data(data, files),
                             json=json_data,
                             cookies=cookies,
                             headers=headers,

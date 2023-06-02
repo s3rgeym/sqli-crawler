@@ -10,6 +10,7 @@ import typing as typ
 from collections import Counter
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from os import getenv
 from pathlib import Path
 from urllib.parse import urldefrag, urlsplit
 
@@ -73,6 +74,7 @@ class SQLiCrawler:
     crawl_per_host: int
     crawlers: int
     sqli_checkers: int
+    executable_path: str | Path | None
     show_browser: bool
     verbosity: int
 
@@ -164,7 +166,7 @@ class SQLiCrawler:
         self,
         browser: Browser,
         crawl_queue: asyncio.Queue[tuple[int, str]],
-        visited_urls: set[str],
+        seen_urls: set[str],
         url_hosts: Counter[str],
         check_queue: asyncio.Queue[RequestInfo],
     ) -> None:
@@ -177,14 +179,14 @@ class SQLiCrawler:
 
                 if (
                     (depth < 0)
-                    or (url in visited_urls)
+                    or (url in seen_urls)
                     or (url_hosts[host] >= self.crawl_per_host)
                 ):
                     continue
 
                 # Это неправильно, но если после await разместить, то лимиты не
                 # будут работать
-                visited_urls.add(url)
+                seen_urls.add(url)
                 url_hosts[host] += 1
 
                 # Создаем новую страницу
@@ -202,7 +204,7 @@ class SQLiCrawler:
 
                 await page.goto(
                     url,
-                    timeout=10000,
+                    timeout=10_000,
                     waitUntil=["domcontentloaded", "networkidle2"],
                 )
                 await self.send_all_forms(page)
@@ -230,7 +232,10 @@ class SQLiCrawler:
             yield client
 
     def inject(
-        self, params: dict | None, data: dict | None, json: dict | None
+        self,
+        params: dict | None,
+        data: dict | None,
+        json: dict | None,
     ) -> typ.Iterator[tuple[dict | None, dict | None, dict | None]]:
         if params:
             for i in params:
@@ -244,10 +249,8 @@ class SQLiCrawler:
                 yield params, cp, json
         if json:
             for k, v in json.items():
-                if isinstance(v(int, float)):
-                    v = str(v)
-                elif isinstance(v, bool):
-                    v = ["false", "true"][v]
+                if isinstance(v, (int, float, bool)):
+                    v = str(v).lower()
                 elif not isinstance(v, str):
                     continue
                 cp = json.copy()
@@ -262,17 +265,17 @@ class SQLiCrawler:
         data: dict | None,
         json: dict | None,
     ) -> str:
-        # => 'get|https://www.linux.org.ru||baz,foo'
+        # POST|https://www.linux.org.ru/ajax_login_process||nick,csrf,passwd|
         return "|".join(
             [
                 method,
                 url,
-                *(",".join(set(x or [])) for x in [params, data, json]),
+                *(",".join(set(x or {})) for x in [params, data, json]),
             ]
         )
 
     async def check_sqli(
-        self, check_queue: asyncio.Queue[RequestInfo], request_hashes: set[str]
+        self, check_queue: asyncio.Queue[RequestInfo], checked_hashes: set[str]
     ) -> None:
         async with self.get_http_client() as http_client:
             while True:
@@ -283,7 +286,7 @@ class SQLiCrawler:
                     if data:
                         try:
                             data, files, json_data = parse_payload(
-                                data, headers
+                                data, headers.pop("content-type")
                             )
                         except ValueError as ex:
                             self.log.warning(ex)
@@ -297,10 +300,10 @@ class SQLiCrawler:
                     req_hash = self.hash_request(
                         method, url, params, data, json_data
                     )
-                    if req_hash in request_hashes:
+                    if req_hash in checked_hashes:
                         self.log.debug("already checked: %s", req_hash)
                         continue
-                    request_hashes.add(req_hash)
+                    checked_hashes.add(req_hash)
                     # Проверяем каждый переданный параметр
                     for params, data, json_data in self.inject(
                         params, data, json_data
@@ -348,10 +351,13 @@ class SQLiCrawler:
                             "headers": headers,
                             "match": match[0],
                         }
-                        jsonina = json.dumps(
-                            res, ensure_ascii=False, sort_keys=True
+                        js = json.dumps(
+                            # Удаляем null
+                            {k: v for k, v in res.items() if v is not None},
+                            ensure_ascii=False,
+                            sort_keys=True,
                         )
-                        self.output.write(jsonina)
+                        self.output.write(js)
                         self.output.flush()
                         await self.squeal()
                         break
@@ -373,11 +379,13 @@ class SQLiCrawler:
         browser = await pyppeteer.launch(
             headless=not self.show_browser,
             defaultViewport=False,
+            executablePath=str(self.executable_path)
+            if self.executable_path
+            else getenv("CHROME_EXECUTABLE_PATH"),
             args=["--no-sandbox"],
         )
 
-        visited_urls = set()
-        visited_urls = set()
+        seen_urls = set()
         url_hosts = Counter()
         check_queue = asyncio.Queue()
 
@@ -386,7 +394,7 @@ class SQLiCrawler:
                 self.crawl(
                     browser,
                     crawl_queue,
-                    visited_urls,
+                    seen_urls,
                     url_hosts,
                     check_queue,
                 )
@@ -394,13 +402,13 @@ class SQLiCrawler:
             for _ in range(self.crawlers)
         ]
 
-        request_hashes: set[str] = set()
+        checked_hashes: set[str] = set()
 
         sqli_checkers = [
             asyncio.create_task(
                 self.check_sqli(
                     check_queue,
-                    request_hashes,
+                    checked_hashes,
                 )
             )
             for _ in range(self.sqli_checkers)
@@ -419,7 +427,8 @@ class SQLiCrawler:
         for t in sqli_checkers:
             t.cancel()
 
-        self.log.info("visited urls: %d", len(visited_urls))
+        self.log.info("seen urls: %d", len(seen_urls))
+        self.log.info("checked urls: %d", len(checked_hashes))
 
     @classmethod
     def parse_args(cls, argv: typ.Sequence[str] | None) -> argparse.Namespace:
@@ -462,6 +471,11 @@ class SQLiCrawler:
             help="number of sqli checkers",
             type=int,
             default=10,
+        )
+        parser.add_argument(
+            "--executable-path",
+            help="chrom* executable path. use environment variable `CHROME_EXECUTABLE_PATH` instead",
+            type=Path,
         )
         parser.add_argument(
             "--show-browser",

@@ -36,8 +36,8 @@ class ParsedPayload(NamedTuple):
     json: dict | None = None
 
 
-def parse_payload(data: str, headers: dict) -> ParsedPayload:
-    mime, _ = parse_header(headers.pop("content-type", ""))
+def parse_payload(data: str, content_type: str) -> ParsedPayload:
+    mime, _ = parse_header(content_type)
     match mime:
         case "application/x-www-form-urlencoded":
             return ParsedPayload(data=dict(parse_qsl(data)))

@@ -1,3 +1,5 @@
+const choice = arr => arr[(Math.random() * arr.length) | 0]
+
 function fillFields(form) {
   for (let field of form.elements) {
     if (field.value) continue
@@ -7,14 +9,29 @@ function fillFields(form) {
         if (field.type === 'password') {
           field.value = '!123456qW'
         } else if (/email/i.test(field.name)) {
-          // Ssij polską świnię
-          field.value = 'kuba@kernel.org'
+          field.value =
+            Math.random().toString(36).slice(2, 8) +
+            '@' +
+            choice(['gmail.com', 'yahoo.com', 'outlook.com'])
         } else {
-          field.value = 'nig' + 'ger'
+          field.value = choice([
+            'qqqqq',
+            'foobar',
+            'qwerty',
+            'test',
+            'xyest',
+            'penis',
+            'hentai',
+            'archbtw',
+          ])
         }
         break
       case 'TEXTAREA':
-        field.value = 'some text goes here'
+        field.value = choice([
+          'some text goes here',
+          'i am fuzzzzzzzzzzy',
+          'arch linux for pedophiles',
+        ])
         break
       case 'SELECT':
         field.selectedIndex = 0

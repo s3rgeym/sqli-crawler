@@ -231,25 +231,22 @@ class SQLiCrawler:
         data: dict | None,
         json: dict | None,
     ) -> typ.Iterator[tuple[dict | None, dict | None, dict | None]]:
-        if params:
-            for i in params:
-                cp = params.copy()
-                cp[i] += QOUTES
-                yield cp, data, json
-        if data:
-            for i in data:
-                cp = data.copy()
-                cp[i] += QOUTES
-                yield params, cp, json
-        if json:
-            for k, v in json.items():
-                if isinstance(v, (int, float, bool)):
-                    v = str(v).lower()
-                elif not isinstance(v, str):
-                    continue
-                cp = json.copy()
-                cp[k] = v + QOUTES
-                yield params, data, cp
+        for i in params or ():
+            cp = params.copy()
+            cp[i] += QOUTES
+            yield cp, data, json
+        for i in data or ():
+            cp = data.copy()
+            cp[i] += QOUTES
+            yield params, cp, json
+        for k, v in (json or {}).items():
+            if isinstance(v, (int, float, bool)):
+                v = str(v).lower()
+            elif not isinstance(v, str):
+                continue
+            cp = json.copy()
+            cp[k] = v + QOUTES
+            yield params, data, cp
 
     def hash_request(
         self,

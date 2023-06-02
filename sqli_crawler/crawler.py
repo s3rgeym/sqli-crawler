@@ -53,7 +53,7 @@ SQLI_REGEX: re.Pattern = re.compile(
     )
 )
 
-QOUTES = "'\""
+QUOTES = "'\""
 
 
 class RequestInfo(typ.NamedTuple):
@@ -240,11 +240,11 @@ class SQLiCrawler:
     ) -> typ.Iterator[tuple[dict | None, dict | None, dict | None]]:
         for i in params or ():
             cp = params.copy()
-            cp[i] += QOUTES
+            cp[i] += QUOTES
             yield cp, data, json
         for i in data or ():
             cp = data.copy()
-            cp[i] += QOUTES
+            cp[i] += QUOTES
             yield params, cp, json
         for k, v in (json or {}).items():
             if isinstance(v, (int, float, bool)):
@@ -252,7 +252,7 @@ class SQLiCrawler:
             elif not isinstance(v, str):
                 continue
             cp = json.copy()
-            cp[k] = v + QOUTES
+            cp[k] = v + QUOTES
             yield params, data, cp
 
     def hash_request(

@@ -234,7 +234,7 @@ class SQLiCrawler:
         async with aiohttp.ClientSession(timeout=tim) as client:
             yield client
 
-    def inject_values(
+    def add_quotes(
         self,
         params: dict | None,
         data: dict | None,
@@ -294,7 +294,9 @@ class SQLiCrawler:
     #     return fd
 
     async def check_sqli(
-        self, check_queue: asyncio.Queue[RequestInfo], checked_hashes: set[str]
+        self,
+        check_queue: asyncio.Queue[RequestInfo],
+        checked_resources: set[str],
     ) -> None:
         async with self.get_http_client() as http_client:
             while True:
@@ -323,22 +325,18 @@ class SQLiCrawler:
                         method, url, params, data, json, cookies
                     )
 
-                    if req_hash in checked_hashes:
-                        self.log.debug("already checked: %s", req_hash)
+                    if req_hash in checked_resources:
+                        self.log.debug("resource already checked: %s", req_hash)
                         continue
 
-                    checked_hashes.add(req_hash)
+                    checked_resources.add(req_hash)
 
-                    injected_gen = self.inject_values(
-                        params, data, json, cookies
-                    )
+                    quoted = self.add_quotes(params, data, json, cookies)
 
                     for params, data, json, cookies in (
-                        itertools.islice(
-                            injected_gen, 0, self.checks_per_resource
-                        )
+                        itertools.islice(quoted, 0, self.checks_per_resource)
                         if self.checks_per_resource > 0
-                        else injected_gen
+                        else quoted
                     ):
                         self.log.debug(
                             f"check sqli: {method=}, {url=}, {params=}, {data=}, {cookies=}"
@@ -421,13 +419,13 @@ class SQLiCrawler:
             for _ in range(self.num_crawlers)
         ]
 
-        checked_hashes: set[str] = set()
+        checked_resources: set[str] = set()
 
         checkers = [
             asyncio.create_task(
                 self.check_sqli(
                     check_queue,
-                    checked_hashes,
+                    checked_resources,
                 )
             )
             for _ in range(self.num_checkers)
@@ -447,7 +445,7 @@ class SQLiCrawler:
             t.cancel()
 
         self.log.info("seen urls: %d", len(seen_urls))
-        self.log.info("checked urls: %d", len(checked_hashes))
+        self.log.info("checked urls: %d", len(checked_resources))
 
     @classmethod
     def parse_args(cls, argv: typ.Sequence[str] | None) -> argparse.Namespace:

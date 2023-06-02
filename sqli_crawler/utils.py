@@ -2,7 +2,6 @@ import asyncio
 import json
 import random
 from email.message import EmailMessage
-from typing import Any, NamedTuple
 from urllib.parse import parse_qsl, urlsplit
 
 
@@ -28,19 +27,3 @@ def normalize_url(url: str) -> str:
 def parse_query_params(url: str) -> tuple[str, dict]:
     sp = urlsplit(url)
     return sp._replace(query="").geturl(), dict(parse_qsl(sp.query))
-
-
-class ParsedPayload(NamedTuple):
-    data: dict | None = None
-    json: dict | None = None
-
-
-def parse_payload(data: str, content_type: str) -> ParsedPayload:
-    mime, _ = parse_header(content_type)
-    match mime:
-        case "application/x-www-form-urlencoded":
-            return ParsedPayload(data=dict(parse_qsl(data)))
-        case "application/json":
-            return ParsedPayload(json=json.loads(data))
-
-    raise ValueError(f"unexpected or unknown mime type: {mime!r}")

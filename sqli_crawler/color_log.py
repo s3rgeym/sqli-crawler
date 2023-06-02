@@ -1,23 +1,27 @@
 import logging
-from typing import Any
 
 from . import termcolor
 
 
-class AnsiColorHandler(logging.StreamHandler):
-    _color_map = {
-        "CRITICAL": termcolor.BOLD + termcolor.RED,
+class ColorHandler(logging.StreamHandler):
+    _logging_colors = {
+        "CRITICAL": termcolor.RED,
         "ERROR": termcolor.RED,
         "WARNING": termcolor.YELLOW,
         "INFO": termcolor.GREEN,
         "DEBUG": termcolor.BLUE,
     }
 
+    @property
+    def isatty(self) -> bool:
+        return getattr(self.stream, "isatty", lambda: False)()
+
     _fmt = logging.Formatter("[%(levelname).1s] %(message)s")
 
-    def format(self, rec: logging.LogRecord) -> str:
-        mess = self._fmt.format(rec)
-        isatty = getattr(self.stream, "isatty", None)
-        if isatty and isatty() and (col := self._color_map.get(rec.levelname)):
-            return f"{col}{mess}{termcolor.RESET}"
-        return mess
+    def format(self, record: logging.LogRecord) -> str:
+        message = self._fmt.format(record)
+        if self.isatty and (
+            color := self._logging_colors.get(record.levelname)
+        ):
+            return f"{color}{message}{termcolor.RESET}"
+        return message

@@ -40,3 +40,11 @@ options:
                         show the browser (default: False)
   -v, --verbosity       be more verbosity (default: 0)
 ```
+
+```bash
+poetry run playwright install chromium
+```
+
+## Notes
+
+`pyppeteer` падал с загадочными ошибками, поэтому был заменен на `playwright`.

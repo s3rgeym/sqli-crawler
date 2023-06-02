@@ -309,7 +309,7 @@ class SQLiCrawler:
                         params, data, json_data
                     ):
                         self.log.debug(
-                            f"check sqli: [{method}] {url}: {params=}, {data=}, {files=}, json={json_data}"
+                            f"check sqli: [{method}] {url}; {params=}, {data=}, {files=}, json={json_data}"
                         )
 
                         if files:

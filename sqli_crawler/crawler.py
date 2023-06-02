@@ -146,9 +146,10 @@ class SQLiCrawler:
                     )
                 )
 
-            # Каждый раз открывается пустая страница, а лишь потом осуществляется переход
+            # Каждую страницу мы открываем в новой вкладке, так легко отменить переход на новую страницу при отправке всех форм
             if req.isNavigationRequest() and page.url != "about:blank":
                 self.log.info("aborted: [%s] %s", req.method, req.url)
+                # Без aborted падает с ошибкой
                 await req.abort("aborted")
                 return
 

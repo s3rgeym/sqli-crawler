@@ -5,6 +5,7 @@ description = ""
 authors = ["Senior YAML Developer <yamldeveloper@proton.me>"]
 readme = "README.md"
 packages = [{include = "sqli_crawler"}]
+# include = ["assets/*"]
 
 [tool.poetry.dependencies]
 python = "^3.11"

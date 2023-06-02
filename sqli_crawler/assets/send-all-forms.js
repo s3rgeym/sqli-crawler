@@ -3,13 +3,14 @@ function fillFields(form) {
     if (field.value) continue
     switch (field.tagName) {
       case 'INPUT':
+        if (field.type === 'hidden') continue
         if (field.type === 'password') {
           field.value = '!123456qW'
         } else if (/email/i.test(field.name)) {
           // Ssij polską świnię
           field.value = 'kuba@kernel.org'
         } else {
-          field.value = 'foobar'
+          field.value = 'nig' + 'ger'
         }
         break
       case 'TEXTAREA':
@@ -22,6 +23,7 @@ function fillFields(form) {
   }
 }
 
+// unused
 function sendForm(form) {
   let params = { method: form.method }
   let url = form.action
@@ -37,7 +39,7 @@ function sendForm(form) {
 ;(() => {
   for (let form of document.forms) {
     fillFields(form)
-    // form.submit()
-    sendForm(form)
+    // sendForm(form)
+    form.submit()
   }
 })()

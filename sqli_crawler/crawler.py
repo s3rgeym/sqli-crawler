@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import json
 import logging
 import re
@@ -20,7 +21,12 @@ from pyppeteer.browser import Browser, Page
 from pyppeteer.network_manager import Request
 
 from .color_log import AnsiColorHandler
-from .utils import normalize_url, parse_payload, parse_query_params
+from .utils import (
+    ParsedPayload,
+    normalize_url,
+    parse_payload,
+    parse_query_params,
+)
 
 ASSETS_PATH = Path(__file__).resolve().parent / "assets"
 
@@ -102,6 +108,7 @@ class SQLiCrawler:
     async def handle_request(
         self,
         req: Request,
+        page: Page,
         check_queue: asyncio.Queue[RequestInfo],
     ) -> None:
         # req.frame.parentFrame is None
@@ -113,42 +120,54 @@ class SQLiCrawler:
         # req.postData
         # Отключаем картинки для ускорения
         # https://stackoverflow.com/questions/43405952/is-there-any-way-to-get-all-mime-type-by-the-resourcetype-of-chrome/47166602#47166602
-        if req.resourceType == "image" or req.url.endswith(".ico"):
-            await req.abort()
-            return
+        try:
+            if req.resourceType == "image" or req.url.endswith(".ico"):
+                await req.abort()
+                return
 
-        # Костыль
-        cookies = {
-            c["name"]: c["value"]
-            for c in (
-                await req._client.send(
-                    "Network.getCookies", {"urls": [req.url]}
+            # cookies = {
+            #     c["name"]: c["value"]
+            #     for c in (
+            #         await req._client.send(
+            #             "Network.getCookies", {"urls": [req.url]}
+            #         )
+            #     )["cookies"]
+            # }
+
+            if (
+                req.resourceType in ("xhr", "fetch", "document", "other")
+                and ((req.method == "get" and "?" in req.url) or req.postData)
+                and urlsplit(page.url).netloc == urlsplit(req.url).netloc
+            ):
+                cookies = await page.cookies(req.url)
+                await check_queue.put(
+                    RequestInfo(
+                        req.method,
+                        req.url,
+                        req.headers.copy(),
+                        {c["name"]: c["value"] for c in cookies},
+                        req.postData,
+                    )
                 )
-            )["cookies"]
-        }
 
-        await check_queue.put(
-            RequestInfo(
-                req.method,
-                req.url,
-                req.headers.copy(),
-                cookies,
-                req.postData,
-            )
-        )
+            # Каждый раз открывается пустая страница, а лишь потом осуществляется переход
+            if req.isNavigationRequest() and page.url != "about:blank":
+                self.log.info("aborted: [%s] %s", req.method, req.url)
+                await req.abort("aborted")
+                return
 
-        await req.continue_()
+            await req.continue_()
+        except Exception as ex:
+            self.log.exception(ex)
 
     async def crawl(
         self,
         browser: Browser,
         crawl_queue: asyncio.Queue[tuple[int, str]],
-        seen_urls: set[str],
+        visited_urls: set[str],
         url_hosts: Counter[str],
         check_queue: asyncio.Queue[RequestInfo],
     ) -> None:
-        self.log.info("started crawl task")
-
         while True:
             # Выносится за try чтобы избежать вывод asyncio.exceptions.CancelledError
             url, depth = await crawl_queue.get()
@@ -158,10 +177,15 @@ class SQLiCrawler:
 
                 if (
                     (depth < 0)
-                    or (url in seen_urls)
+                    or (url in visited_urls)
                     or (url_hosts[host] >= self.crawl_per_host)
                 ):
                     continue
+
+                # Это неправильно, но если после await разместить, то лимиты не
+                # будут работать
+                visited_urls.add(url)
+                url_hosts[host] += 1
 
                 # Создаем новую страницу
                 page = await browser.newPage()
@@ -170,14 +194,9 @@ class SQLiCrawler:
                 page.on(
                     "request",
                     lambda req: asyncio.ensure_future(
-                        self.handle_request(req, check_queue)
+                        self.handle_request(req, page, check_queue)
                     ),
                 )
-
-                # Это неправильно, но если после await разместить, то лимиты не
-                # будут работать
-                seen_urls.add(url)
-                url_hosts[host] += 1
 
                 self.log.debug(f"crawl: {depth=}, {url=}")
 
@@ -210,47 +229,99 @@ class SQLiCrawler:
         async with aiohttp.ClientSession(timeout=tim) as client:
             yield client
 
-    def inject(self, params, data) -> typ.Iterator[tuple[dict, dict]]:
-        params = dict(params or {})
-        data = dict(data or {})
-        for i in params:
-            cp = params.copy()
-            cp[i] += QOUTES
-            yield cp, data
-        for i in data:
-            cp = data.copy()
-            cp[i] += QOUTES
-            yield params, cp
+    def inject(
+        self, params: dict | None, data: dict | None, json: dict | None
+    ) -> typ.Iterator[tuple[dict | None, dict | None, dict | None]]:
+        if params:
+            for i in params:
+                cp = params.copy()
+                cp[i] += QOUTES
+                yield cp, data, json
+        if data:
+            for i in data:
+                cp = data.copy()
+                cp[i] += QOUTES
+                yield params, cp, json
+        if json:
+            for k, v in json.items():
+                if isinstance(v(int, float)):
+                    v = str(v)
+                elif isinstance(v, bool):
+                    v = ["false", "true"][v]
+                elif not isinstance(v, str):
+                    continue
+                cp = json.copy()
+                cp[k] = v + QOUTES
+                yield params, data, cp
 
-    async def check_sqli(self, check_queue: asyncio.Queue[RequestInfo]) -> None:
-        self.log.info("started check sqli task")
+    def hash_request(
+        self,
+        method: str,
+        url: str,
+        params: dict | None,
+        data: dict | None,
+        json: dict | None,
+    ) -> str:
+        # => 'get|https://www.linux.org.ru||baz,foo'
+        return "|".join(
+            [
+                method,
+                url,
+                *(",".join(set(x or [])) for x in [params, data, json]),
+            ]
+        )
+
+    async def check_sqli(
+        self, check_queue: asyncio.Queue[RequestInfo], request_hashes: set[str]
+    ) -> None:
         async with self.get_http_client() as http_client:
             while True:
                 method, url, headers, cookies, data = await check_queue.get()
                 try:
                     url, _ = urldefrag(url)
-                    params = None
+                    params = files = json_data = None
                     if data:
                         try:
-                            data, _ = parse_payload(data, headers)
+                            data, files, json_data = parse_payload(
+                                data, headers
+                            )
                         except ValueError as ex:
                             self.log.warning(ex)
                             continue
                     else:
                         url, params = parse_query_params(url)
                         if not params:
-                            self.log.debug("no data to check")
+                            self.log.debug("no parameters")
                             continue
+                    # Уменьшаем количество запросов
+                    req_hash = self.hash_request(
+                        method, url, params, data, json_data
+                    )
+                    if req_hash in request_hashes:
+                        self.log.debug("already checked: %s", req_hash)
+                        continue
+                    request_hashes.add(req_hash)
                     # Проверяем каждый переданный параметр
-                    for params, data in self.inject(params, data):
+                    for params, data, json_data in self.inject(
+                        params, data, json_data
+                    ):
                         self.log.debug(
-                            f"check sqli: {method=}, {url=}, {params=}, {data=}"
+                            f"check sqli: [{method}] {url}: {params=}, {data=}, {files=}, json={json_data}"
                         )
+
+                        if files:
+                            fd = aiohttp.FormData()
+                            for k, v in {**(data or {}), **files}.items():
+                                fd.add_field(k, v)
+                        else:
+                            fd = data
+
                         response: ClientResponse = await http_client.request(
                             method,
                             url,
                             params=params,
-                            data=data,
+                            data=fd,
+                            json=json_data,
                             cookies=cookies,
                             headers=headers,
                         )
@@ -258,19 +329,29 @@ class SQLiCrawler:
                         if not (match := SQLI_REGEX.search(contents)):
                             continue
                         self.log.info(
-                            f"sqli detected: {method=}, {url=}, {params=}, {data=}, {match[0]=}",
+                            "sqli detected: [%s] %s; see output", method, url
                         )
                         res = {
                             "method": method,
                             "url": url,
                             "params": params,
                             "data": data,
+                            "files": files
+                            or {
+                                k: base64.b64encode(
+                                    v.read() if hasattr(v, "read") else v
+                                ).decode()
+                                for k, v in files.items()
+                            },
+                            "json": json_data,
                             "cookies": cookies,
                             "headers": headers,
                             "match": match[0],
                         }
-                        js = json.dumps(res, ensure_ascii=False, sort_keys=True)
-                        self.output.write(js)
+                        jsonina = json.dumps(
+                            res, ensure_ascii=False, sort_keys=True
+                        )
+                        self.output.write(jsonina)
                         self.output.flush()
                         await self.squeal()
                         break
@@ -295,8 +376,8 @@ class SQLiCrawler:
             args=["--no-sandbox"],
         )
 
-        seen_urls = set()
-        seen_urls = set()
+        visited_urls = set()
+        visited_urls = set()
         url_hosts = Counter()
         check_queue = asyncio.Queue()
 
@@ -305,7 +386,7 @@ class SQLiCrawler:
                 self.crawl(
                     browser,
                     crawl_queue,
-                    seen_urls,
+                    visited_urls,
                     url_hosts,
                     check_queue,
                 )
@@ -313,10 +394,13 @@ class SQLiCrawler:
             for _ in range(self.crawlers)
         ]
 
+        request_hashes: set[str] = set()
+
         sqli_checkers = [
             asyncio.create_task(
                 self.check_sqli(
                     check_queue,
+                    request_hashes,
                 )
             )
             for _ in range(self.sqli_checkers)
@@ -335,7 +419,7 @@ class SQLiCrawler:
         for t in sqli_checkers:
             t.cancel()
 
-        self.log.info("seen urls: %d", len(seen_urls))
+        self.log.info("visited urls: %d", len(visited_urls))
 
     @classmethod
     def parse_args(cls, argv: typ.Sequence[str] | None) -> argparse.Namespace:

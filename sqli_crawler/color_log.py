@@ -6,7 +6,7 @@ from . import termcolor
 
 class AnsiColorHandler(logging.StreamHandler):
     _color_map = {
-        "CRITICAL": termcolor.RED,
+        "CRITICAL": termcolor.BOLD + termcolor.RED,
         "ERROR": termcolor.RED,
         "WARNING": termcolor.YELLOW,
         "INFO": termcolor.GREEN,

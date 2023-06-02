@@ -150,7 +150,7 @@ class SQLiCrawler:
 
             # Каждую страницу мы открываем в новой вкладке, так легко отменить переход на новую страницу при отправке всех форм
             if req.isNavigationRequest() and page.url != "about:blank":
-                self.log.info("aborted: [%s] %s", req.method, req.url)
+                self.log.debug("aborted: [%s] %s", req.method, req.url)
                 # Без aborted падает с ошибкой
                 await req.abort("aborted")
                 return
@@ -340,7 +340,7 @@ class SQLiCrawler:
 
                     for params, data, json, cookies in injected_gen:
                         self.log.debug(
-                            f"check sqli: {method=}, {url=}, {params=}, {data=}, {cookies}"
+                            f"check sqli: {method=}, {url=}, {params=}, {data=}, {cookies=}"
                         )
 
                         response: ClientResponse = await http_client.request(

@@ -32,7 +32,6 @@ def parse_query_params(url: str) -> tuple[str, dict]:
 
 class ParsedPayload(NamedTuple):
     data: dict | None = None
-    files: dict | None = None
     json: dict | None = None
 
 

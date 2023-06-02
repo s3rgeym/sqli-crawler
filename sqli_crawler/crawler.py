@@ -202,6 +202,12 @@ class SQLiCrawler:
                     timeout=10_000,
                     waitUntil=["domcontentloaded", "networkidle2"],
                 )
+                # Leave site?
+                # Changes you made may not be saved.
+                # https://stackoverflow.com/questions/64569446/can-i-ignore-the-leave-site-dialog-when-browsing-headless-using-puppeteer
+                await page.evaluate(
+                    "window.onbeforeunload = null", force_expr=True
+                )
                 await self.send_all_forms(page)
                 if depth > 0:
                     links = await self.extract_links(page)
@@ -266,23 +272,13 @@ class SQLiCrawler:
             ]
         )
 
-    def get_form_data(
-        self,
-        data: dict | None,
-        files: dict | None,
-    ) -> aiohttp.FormData | None:
-        if not data and not files:
-            return
-        fd = aiohttp.FormData()
-        for name, value in (data or {}).items():
-            fd.add_field(name, value)
-        for name, value in (files or {}).items():
-            if hasattr(value, "__iter__"):
-                value, filename = value
-            else:
-                filename = None
-            fd.add_field(name, value, filename=filename)
-        return fd
+    # def get_form_data(self, data: dict | None) -> aiohttp.FormData | None:
+    #     if not data:
+    #         return
+    #     fd = aiohttp.FormData()
+    #     for name, value in data.items():
+    #         fd.add_field(name, value)
+    #     return fd
 
     async def check_sqli(
         self, check_queue: asyncio.Queue[RequestInfo], checked_hashes: set[str]
@@ -290,11 +286,13 @@ class SQLiCrawler:
         async with self.get_http_client() as http_client:
             while True:
                 method, url, headers, cookies, data = await check_queue.get()
+
                 try:
-                    params = files = json_data = None
+                    params = json_data = None
+
                     if data:
                         try:
-                            data, files, json_data = parse_payload(
+                            data, json_data = parse_payload(
                                 data, headers.pop("content-type")
                             )
                         except ValueError as ex:
@@ -302,30 +300,35 @@ class SQLiCrawler:
                             continue
                     else:
                         url, params = parse_query_params(url)
+
                         if not params:
                             self.log.debug("no parameters")
                             continue
+
                     # Уменьшаем количество запросов
                     req_hash = self.hash_request(
                         method, url, params, data, json_data
                     )
+
                     if req_hash in checked_hashes:
                         self.log.debug("already checked: %s", req_hash)
                         continue
+
                     checked_hashes.add(req_hash)
+
                     # Проверяем каждый переданный параметр
                     for params, data, json_data in self.inject(
                         params, data, json_data
                     ):
                         self.log.debug(
-                            f"check sqli: [{method}] {url}; {params=}, {data=}, {files=}, json={json_data}"
+                            f"check sqli: [{method}] {url}; {params=}, {data=}, json={json_data}"
                         )
 
                         response: ClientResponse = await http_client.request(
                             method,
                             url,
                             params=params,
-                            data=self.get_form_data(data, files),
+                            data=data,
                             json=json_data,
                             cookies=cookies,
                             headers=headers,
@@ -342,13 +345,6 @@ class SQLiCrawler:
                             "status_code": response.status,
                             "params": params,
                             "data": data,
-                            "files": files
-                            or {
-                                k: base64.b64encode(
-                                    getattr(v, "read", lambda v: v)()
-                                ).decode()
-                                for k, v in files.items()
-                            },
                             "json": json_data,
                             "cookies": cookies,
                             "headers": headers,

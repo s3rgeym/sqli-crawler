@@ -473,7 +473,7 @@ class SQLiCrawler:
         )
         parser.add_argument(
             "--executable-path",
-            help="chrom* executable path. use environment variable `CHROME_EXECUTABLE_PATH` instead",
+            help="chrome-like browser executable path. Use environment variable `CHROME_EXECUTABLE_PATH` instead",
             type=Path,
         )
         parser.add_argument(

@@ -459,13 +459,13 @@ class SQLiCrawler:
             "--crawl-per-host",
             help="max links to crawl per host",
             type=int,
-            default=100,
+            default=120,
         )
         parser.add_argument(
             "--crawlers",
             help="number of crawlers",
             type=int,
-            default=25,
+            default=30,
         )
         parser.add_argument(
             "--sqli-checkers",

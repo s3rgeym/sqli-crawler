@@ -333,12 +333,11 @@ class SQLiCrawler:
                         params, data, json, cookies
                     )
 
-                    if self.checks_per_url > 0:
-                        injected_gen = itertools.islice(
-                            injected_gen, 0, self.checks_per_url
-                        )
-
-                    for params, data, json, cookies in injected_gen:
+                    for params, data, json, cookies in (
+                        itertools.islice(injected_gen, 0, self.checks_per_url)
+                        if self.checks_per_url > 0
+                        else injected_gen
+                    ):
                         self.log.debug(
                             f"check sqli: {method=}, {url=}, {params=}, {data=}, {cookies=}"
                         )

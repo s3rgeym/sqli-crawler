@@ -10,3 +10,9 @@ Install from source:
 git clone && cd
 pipx install --force .
 ```
+
+Usage:
+
+```bash
+sql-crawler -h
+```

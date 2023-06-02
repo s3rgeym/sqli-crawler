@@ -138,7 +138,7 @@ class SQLiCrawler:
 
             if (
                 req.resourceType in ("xhr", "fetch", "document", "other")
-                and ((req.method == "get" and "?" in req.url) or req.postData)
+                and ((req.method == "GET" and "?" in req.url) or req.postData)
                 and urlsplit(page.url).netloc == urlsplit(req.url).netloc
             ):
                 cookies = await page.cookies(req.url)
@@ -342,7 +342,7 @@ class SQLiCrawler:
                             "files": files
                             or {
                                 k: base64.b64encode(
-                                    v.read() if hasattr(v, "read") else v
+                                    getattr(v, "read", lambda v: v)()
                                 ).decode()
                                 for k, v in files.items()
                             },

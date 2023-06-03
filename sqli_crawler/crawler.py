@@ -11,6 +11,7 @@ import typing as typ
 from collections import Counter
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from http.cookies import SimpleCookie
 from os import getenv
 from pathlib import Path
 from urllib.parse import urldefrag, urlsplit
@@ -35,11 +36,9 @@ SQLI_REGEX: re.Pattern = re.compile(
             r"Unclosed quotation mark after the character string",
             # Иногда при ошибке выводится полный запрос
             r"SELECT \* FROM",
-            # Название PHP функций
-            r"mysqli?_num_rows",
-            r"mysqli?_query",
-            r"mysqli?_fetch_(?:array|assoc|field|object|row)",
-            r"mysqli?_result",
+            # Название PHP функций для работы с БД (eq, mysql_query или pg_select)
+            r"\bmysqli?_\w+",
+            r"\bpg_(query|select|insert|update|fetch)",
             # bitrix
             r"<b>DB query error.</b>",
             # pg_query
@@ -56,9 +55,9 @@ QUOTES = "'\""
 class InterceptedRequest(typ.NamedTuple):
     method: str
     url: str
-    cookies: dict
+    cookies: dict | None
     headers: dict
-    data: dict
+    data: dict | None
 
     @property
     def content_type(self) -> str:
@@ -69,7 +68,7 @@ class InterceptedRequest(typ.NamedTuple):
         return self.content_type.split(";")[0].lower()
 
     @property
-    def is_urlencoded(self) -> None:
+    def is_forn_urlencoded(self) -> None:
         return self.mime_type == "application/x-www-form-urlencoded"
 
     @property
@@ -83,7 +82,7 @@ class SQLiCrawler:
 
     input: typ.TextIO
     output: typ.TextIO
-    checks_per_resource: int
+    req_checks: int | None
     crawl_depth: int
     crawl_per_host: int
     executable_path: str | Path | None
@@ -120,12 +119,58 @@ class SQLiCrawler:
             )
         )
 
+    async def handle_route(
+        self,
+        route: Route,
+        request: Request,
+        page: Page,
+        check_queue: asyncio.Queue[InterceptedRequest],
+    ) -> None:
+        if request.resource_type == "image":
+            await route.abort()
+            return
+
+        if (
+            request.resource_type in ("document", "xhr", "fetch", "other")
+            and (request.post_data_json or "?" in request.url)
+            and urlsplit(request.url).netloc == urlsplit(page.url).netloc
+        ):
+            url, _ = urldefrag(request.url)
+            # lower-cased header names
+            headers = await request.all_headers()
+            # cookies = {
+            #     c["name"]: c["value"] for c in await page.context.cookies(url)
+            # }
+            cookies = None
+            if cookie := headers.pop("cookie", 0):
+                cookies = {
+                    k: v.value for k, v in SimpleCookie.load(cookie).items()
+                }
+            await check_queue.put(
+                InterceptedRequest(
+                    method=request.method.upper(),
+                    url=url,
+                    headers=headers,
+                    cookies=cookies,
+                    data=request.post_data_json,
+                )
+            )
+
+        # Каждую страницу мы открываем в новой вкладке, так легко отменить переход на новую страницу при отправке всех форм
+        if request.is_navigation_request() and page.url != "about:blank":
+            self.log.debug("aborted: [%s] %s", request.method, request.url)
+            # Без aborted падает с ошибкой
+            await route.abort("aborted")
+            return
+
+        await route.continue_()
+
     async def crawl(
         self,
         context: BrowserContext,
         crawl_queue: asyncio.Queue[tuple[int, str]],
-        crawled_urls: set[str],
-        crawled_hosts: Counter[str],
+        seen_urls: set[str],
+        seen_hosts: Counter[str],
         check_queue: asyncio.Queue[InterceptedRequest],
     ) -> None:
         while True:
@@ -137,83 +182,46 @@ class SQLiCrawler:
 
                 if (
                     (depth < 0)
-                    or (url in crawled_urls)
-                    or (crawled_hosts[host] >= self.crawl_per_host)
+                    or (url in seen_urls)
+                    or (seen_hosts[host] >= self.crawl_per_host)
                 ):
                     continue
 
                 # Это неправильно, но если после await разместить, то лимиты не
                 # будут работать
-                crawled_urls.add(url)
-                crawled_hosts[host] += 1
+                seen_urls.add(url)
+                seen_hosts[host] += 1
 
                 # Создаем новую страницу
-                page: Page = await context.new_page()
+                page = await context.new_page()
 
-                async def handle(route: Route, request: Request) -> None:
-                    if request.resource_type == "image":
-                        await route.abort()
-                        return
+                try:
+                    await page.route(
+                        "**/*",
+                        lambda route, request: asyncio.create_task(
+                            self.handle_route(route, request, page, check_queue)
+                        ),
+                    )
 
-                    if (
-                        request.resource_type
-                        in ("document", "xhr", "fetch", "other")
-                        and (request.post_data_json or "?" in request.url)
-                        and urlsplit(page.url).netloc
-                        == urlsplit(request.url).netloc
-                    ):
-                        url, _ = urldefrag(request.url)
-                        cookies = {
-                            c["name"]: c["value"]
-                            for c in await context.cookies(url)
-                        }
-                        headers = await request.all_headers()
-                        await check_queue.put(
-                            InterceptedRequest(
-                                method=request.method.upper(),
-                                url=url,
-                                headers=headers,
-                                cookies=cookies,
-                                data=dict(request.post_data_json or {}),
-                            )
-                        )
+                    self.log.debug("crawl: %s", url)
 
-                    # Каждую страницу мы открываем в новой вкладке, так легко отменить переход на новую страницу при отправке всех форм
-                    if (
-                        request.is_navigation_request()
-                        and page.url != "about:blank"
-                    ):
-                        self.log.debug(
-                            "aborted: [%s] %s", request.method, request.url
-                        )
-                        # Без aborted падает с ошибкой
-                        await route.abort("aborted")
-                        return
-
-                    await route.continue_()
-
-                # TypeError: Passing coroutines is forbidden, use tasks explicitly.
-                await page.route(
-                    "**/*",
-                    handle
-                    # lambda route, request: asyncio.create_task(
-                    #     handle(route, request)
-                    # ),
-                )
-
-                self.log.debug("crawl: %s", url)
-
-                await page.goto(url, timeout=10_000, wait_until="networkidle")
-                # Leave site?
-                # Changes you made may not be saved.
-                # https://stackoverflow.com/questions/64569446/can-i-ignore-the-leave-site-dialog-when-browsing-headless-using-puppeteer
-                await page.evaluate("window.onbeforeunload = null")
-                await self.send_all_forms(page)
-                if depth > 0:
-                    links = await self.extract_links(page)
-                    for link in links:
-                        await crawl_queue.put((link, depth - 1))
-                await page.close()
+                    await page.goto(url)
+                    # Leave site?
+                    # Changes you made may not be saved.
+                    # https://stackoverflow.com/questions/64569446/can-i-ignore-the-leave-site-dialog-when-browsing-headless-using-puppeteer
+                    await page.evaluate("window.onbeforeunload = null")
+                    if depth > 0:
+                        links = await self.extract_links(page)
+                        for link in links:
+                            await crawl_queue.put((link, depth - 1))
+                    # Отправляем все формы
+                    await self.send_all_forms(page)
+                    # Ждем пока запросы отправтся
+                    # Не советуют использовать
+                    # await page.wait_for_load_state("networkidle")
+                    await page.wait_for_timeout(3000)
+                finally:
+                    await page.close()
             except PlaywrightTimeoutError:
                 self.log.warn("crawl timed out")
             except Exception as ex:
@@ -227,7 +235,7 @@ class SQLiCrawler:
         async with aiohttp.ClientSession(timeout=tim) as client:
             yield client
 
-    def add_quotes(
+    def inject(
         self,
         params: dict | None,
         data: dict | None,
@@ -239,6 +247,7 @@ class SQLiCrawler:
             cp = params.copy()
             cp[i] += QUOTES
             yield cp, data, cookies
+        # Данные могут быть как отправлеными через форму (только строки) так и типизированными (json)
         for k, v in (data or {}).items():
             if isinstance(v, (int, float, bool)):
                 v = str(v).lower()
@@ -262,13 +271,10 @@ class SQLiCrawler:
         data_type: str,
     ) -> str:
         # POST|https://www.linux.org.ru/ajax_login_process||JSESSIONID,tz,CSRF_TOKEN|nick,passwd,csrf|application/x-www-form-urlencoded
-        d = locals()
-        d.pop("self")
         return "|".join(
-            ",".join(set(v))
-            if isinstance(v, dict)
-            else ("" if v is None else v)
-            for v in d.values()
+            ",".join(set(v)) if isinstance(v, dict) else [v, ""][v is None]
+            for k, v in locals().items()
+            if k != "self"
         )
 
     # def get_form_data(self, data: dict | None) -> aiohttp.FormData | None:
@@ -282,7 +288,7 @@ class SQLiCrawler:
     async def check_sqli(
         self,
         check_queue: asyncio.Queue[InterceptedRequest],
-        request_hashes: set[str],
+        seen_requests: set[str],
     ) -> None:
         async with self.get_http_client() as http_client:
             while True:
@@ -307,18 +313,14 @@ class SQLiCrawler:
                         req.mime_type,
                     )
 
-                    if req_hash in request_hashes:
+                    if req_hash in seen_requests:
                         self.log.debug("already checked: %s", req_hash)
                         continue
 
-                    request_hashes.add(req_hash)
+                    seen_requests.add(req_hash)
 
-                    quoted = self.add_quotes(params, data, cookies)
-
-                    for params, data, cookies in (
-                        itertools.islice(quoted, 0, self.checks_per_resource)
-                        if self.checks_per_resource > 0
-                        else quoted
+                    for params, data, cookies in itertools.islice(
+                        self.inject(params, data, cookies), 0, self.req_checks
                     ):
                         self.log.debug(
                             f"check sqli: {method=}, {url=}, {params=}, {data=}, {cookies=}"
@@ -328,13 +330,17 @@ class SQLiCrawler:
                             method,
                             url,
                             params=params,
-                            data=data if data and req.is_urlencoded else None,
-                            json=[None, data][data and req.is_json],
+                            data=(
+                                data
+                                if data and req.is_forn_urlencoded
+                                else None
+                            ),
+                            json=[None, data][bool(data and req.is_json)],
                             cookies=cookies,
                             headers=headers,
                         )
 
-                        contents = await response.text()
+                        contents = await response.text(errors="replace")
 
                         if not (match := SQLI_REGEX.search(contents)):
                             continue
@@ -382,9 +388,10 @@ class SQLiCrawler:
             )
 
             context = await browser.new_context()
+            context.set_default_navigation_timeout(15_000)
 
-            crawled_urls = set()
-            crawled_hosts = Counter()
+            seen_urls = set()
+            seen_hosts = Counter()
             check_queue = asyncio.Queue()
 
             crawlers = [
@@ -392,21 +399,21 @@ class SQLiCrawler:
                     self.crawl(
                         context,
                         crawl_queue,
-                        crawled_urls,
-                        crawled_hosts,
+                        seen_urls,
+                        seen_hosts,
                         check_queue,
                     )
                 )
                 for _ in range(self.num_crawlers)
             ]
 
-            request_hashes: set[str] = set()
+            seen_requests = set()
 
             checkers = [
                 asyncio.ensure_future(
                     self.check_sqli(
                         check_queue,
-                        request_hashes,
+                        seen_requests,
                     )
                 )
                 for _ in range(self.num_checkers)
@@ -424,8 +431,8 @@ class SQLiCrawler:
         for t in checkers:
             t.cancel()
 
-        self.log.info("seen urls: %d", len(crawled_urls))
-        self.log.info("checked urls: %d", len(request_hashes))
+        self.log.info("seen urls: %d", len(seen_urls))
+        self.log.info("checked urls: %d", len(seen_requests))
 
     @classmethod
     def parse_args(cls, argv: typ.Sequence[str] | None) -> argparse.Namespace:
@@ -461,7 +468,7 @@ class SQLiCrawler:
             "--num-crawlers",
             help="number of crawlers",
             type=int,
-            default=20,
+            default=25,
         )
         parser.add_argument(
             "--num-checkers",
@@ -470,10 +477,7 @@ class SQLiCrawler:
             default=10,
         )
         parser.add_argument(
-            "--checks-per-resource",
-            help="max number of sqli checks per resource (no limit = -1)",
-            type=int,
-            default=-1,
+            "--req-checks", help="max checks for request", type=int
         )
         parser.add_argument(
             "--executable-path",

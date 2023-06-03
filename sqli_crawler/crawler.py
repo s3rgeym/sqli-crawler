@@ -192,10 +192,10 @@ class SQLiCrawler:
                 seen_urls.add(url)
                 seen_hosts[host] += 1
 
-                # Создаем новую страницу
-                page = await context.new_page()
-
                 try:
+                    # Создаем новую страницу
+                    page = await context.new_page()
+
                     await page.route(
                         "**/*",
                         lambda route, request: asyncio.create_task(
@@ -209,7 +209,7 @@ class SQLiCrawler:
                     # Leave site?
                     # Changes you made may not be saved.
                     # https://stackoverflow.com/questions/64569446/can-i-ignore-the-leave-site-dialog-when-browsing-headless-using-puppeteer
-                    await page.evaluate("window.onbeforeunload = null")
+                    # await page.evaluate("window.onbeforeunload = null")
                     if depth > 0:
                         links = await self.extract_links(page)
                         for link in links:
@@ -221,7 +221,7 @@ class SQLiCrawler:
                     # await page.wait_for_load_state("networkidle")
                     await page.wait_for_timeout(3000)
                 finally:
-                    await page.close()
+                    await page.close(run_before_unload=True)
             except PlaywrightTimeoutError:
                 self.log.warn("crawl timed out")
             except Exception as ex:
@@ -348,6 +348,7 @@ class SQLiCrawler:
 
                         if not (match := SQLI_REGEX.search(contents)):
                             continue
+
                         self.log.info(
                             "sqli detected: [%s] %s; see output", method, url
                         )

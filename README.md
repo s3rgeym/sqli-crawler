@@ -6,9 +6,9 @@ Crawling links and forms using headless Chromium and check its to SQLi.
 
 Принцип работы:
 
-* есть список сайтов
-* последовательно посещаем их внутрениие ссылки, отправляя все формы
-* перехватываем запросы, а потом модифицируем их и проверяем ответы на наличие ошибок БД
+- есть список сайтов
+- последовательно посещаем их внутрениие ссылки, отправляя все формы
+- перехватываем запросы, а потом модифицируем их и проверяем ответы на наличие ошибок БД
 
 Install from source:
 
@@ -92,6 +92,25 @@ navigating to "https://5elementshostel.de/frankfurt/#reviews", waiting until "ne
     result = next(iter(done)).result()
              ^^^^^^^^^^^^^^^^^^^^^^^^^
 Exception: Connection closed while reading from the driver
+
+future: <Task finished name='Task-2253' coro=<SQLiCrawler.handle_route() done, defined at /home/sergey/workspace/sqli-crawler/sqli_crawler/crawler.py:122> exception=Error('POST data is not a valid JSON object: ------WebKitFormBoundary7XSTb8eK9A02QFw9\r\nContent-Disposition: form-data; name="_requestToken"\r\n\r\n0\r\n------WebKitFormBoundary7XSTb8eK9A02QFw9--\r\n')>
+Traceback (most recent call last):
+  File "/home/sergey/.cache/pypoetry/virtualenvs/sqli-crawler-pMyiD5aU-py3.11/lib/python3.11/site-packages/playwright/_impl/_network.py", line 181, in post_data_json
+    return json.loads(post_data)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.11/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.11/json/decoder.py", line 337, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.11/json/decoder.py", line 355, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+aiohttp.client_exceptions.ClientOSError: Cannot write to closing transport
+
+aiohttp.client_exceptions.ClientOSError: Cannot write to closing transport
 ```
 
 Initiator пока не реализован.

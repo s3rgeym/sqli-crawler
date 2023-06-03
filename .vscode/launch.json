@@ -9,7 +9,14 @@
       "type": "python",
       "request": "launch",
       "module": "sqli_crawler",
-      "args": ["-i", "sites.txt", "--show-browser", "-vvv"],
+      "args": [
+        "-i",
+        "sites.txt",
+        "-o",
+        "output.json",
+        "--show-browser",
+        "-vvv"
+      ],
       "justMyCode": true,
       "cwd": "${workspaceFolder}"
     }

@@ -340,7 +340,11 @@ class SQLiCrawler:
                             headers=headers,
                         )
 
-                        contents = await response.text(errors="replace")
+                        # >>> open('/dev/urandom', 'rb').read(10).decode(errors='ignore')
+                        # 'cF\x13Y:'
+                        # >>> open('/dev/urandom', 'rb').read(10).decode(errors='replace')
+                        # '^�/�\x07[w��['
+                        contents = await response.text(errors="ignore")
 
                         if not (match := SQLI_REGEX.search(contents)):
                             continue

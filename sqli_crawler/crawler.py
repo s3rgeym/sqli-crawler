@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import base64
 import itertools
 import json as jsonlib
 import logging
+import os
 import re
 import typing as typ
 from collections import Counter
@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from http.cookies import SimpleCookie
 from os import getenv
 from pathlib import Path
-from urllib.parse import urldefrag, urlsplit
+from urllib.parse import parse_qsl, urldefrag, urlsplit
 
 import aiohttp
 from aiohttp.client import ClientResponse
@@ -25,7 +25,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
 
 from .color_log import ColorHandler
-from .utils import normalize_url, parse_query_params
+from .utils import MimeType, normalize_url
 
 ASSETS_PATH = Path(__file__).resolve().parent / "assets"
 
@@ -52,28 +52,12 @@ SQLI_REGEX: re.Pattern = re.compile(
 QUOTES = "'\""
 
 
-class InterceptedRequest(typ.NamedTuple):
+# immutable
+class CheckRequest(typ.NamedTuple):
     method: str
     url: str
-    cookies: dict | None
     headers: dict
-    data: dict | None
-
-    @property
-    def content_type(self) -> str:
-        return self.headers.get("content-type", "")
-
-    @property
-    def mime_type(self) -> str:
-        return self.content_type.split(";")[0].lower()
-
-    @property
-    def is_forn_urlencoded(self) -> None:
-        return self.mime_type == "application/x-www-form-urlencoded"
-
-    @property
-    def is_json(self) -> bool:
-        return self.mime_type == "application/json"
+    body: dict | None
 
 
 @dataclass
@@ -107,8 +91,8 @@ class SQLiCrawler:
         )
         await proc.wait()
 
-    async def send_all_forms(self, page: Page) -> None:
-        await page.add_script_tag(path=ASSETS_PATH / "send-all-forms.js")
+    async def submit_forms(self, page: Page) -> None:
+        await page.add_script_tag(path=ASSETS_PATH / "submit-forms.js")
 
     async def extract_links(self, page: Page) -> set[str]:
         return set(
@@ -124,7 +108,7 @@ class SQLiCrawler:
         route: Route,
         request: Request,
         page: Page,
-        check_queue: asyncio.Queue[InterceptedRequest],
+        check_queue: asyncio.Queue[CheckRequest],
     ) -> None:
         if request.resource_type == "image":
             await route.abort()
@@ -132,27 +116,15 @@ class SQLiCrawler:
 
         if (
             request.resource_type in ("document", "xhr", "fetch", "other")
-            and (request.post_data_json or "?" in request.url)
             and urlsplit(request.url).netloc == urlsplit(page.url).netloc
         ):
-            url, _ = urldefrag(request.url)
-            # lower-cased header names
             headers = await request.all_headers()
-            # cookies = {
-            #     c["name"]: c["value"] for c in await page.context.cookies(url)
-            # }
-            cookies = None
-            if cookie := headers.pop("cookie", 0):
-                cookies = {
-                    k: v.value for k, v in SimpleCookie.load(cookie).items()
-                }
             await check_queue.put(
-                InterceptedRequest(
-                    method=request.method.upper(),
-                    url=url,
+                CheckRequest(
+                    method=request.method,
+                    url=request.url,
                     headers=headers,
-                    cookies=cookies,
-                    data=request.post_data_json,
+                    body=request.post_data,
                 )
             )
 
@@ -171,11 +143,12 @@ class SQLiCrawler:
         crawl_queue: asyncio.Queue[tuple[int, str]],
         seen_urls: set[str],
         seen_hosts: Counter[str],
-        check_queue: asyncio.Queue[InterceptedRequest],
+        check_queue: asyncio.Queue[CheckRequest],
     ) -> None:
         while True:
             # Выносится за try чтобы избежать вывод asyncio.exceptions.CancelledError
             url, depth = await crawl_queue.get()
+            self.log.debug(f"crawl: {depth=}, {url=}")
 
             try:
                 host = urlsplit(url).netloc
@@ -185,6 +158,7 @@ class SQLiCrawler:
                     or (url in seen_urls)
                     or (seen_hosts[host] >= self.crawl_per_host)
                 ):
+                    self.log.debug("skip alredy seen")
                     continue
 
                 # Это неправильно, но если после await разместить, то лимиты не
@@ -192,85 +166,63 @@ class SQLiCrawler:
                 seen_urls.add(url)
                 seen_hosts[host] += 1
 
-                try:
-                    # Создаем новую страницу
-                    page = await context.new_page()
+                # вкладки иногда зависают и остаются открытыми, что может уронить браузер...
+                # закрываем лишние вкладки
+                # run_before_unload=True нужно чтобы закрыть вкладку без подтверждения Leave
+                # >>> list(range(15))[:-10]
+                # [0, 1, 2, 3, 4]
+                await asyncio.gather(
+                    *(
+                        p.close(run_before_unload=True)
+                        for p in context.pages[: -self.num_crawlers]
+                    ),
+                    return_exceptions=True,
+                )
 
-                    await page.route(
-                        "**/*",
-                        lambda route, request: asyncio.create_task(
-                            self.handle_route(route, request, page, check_queue)
-                        ),
-                    )
+                # открываем новую страницу
+                page = await context.new_page()
 
-                    self.log.debug("crawl: %s", url)
+                await page.route(
+                    "**/*",
+                    lambda route, request: asyncio.create_task(
+                        self.handle_route(route, request, page, check_queue)
+                    ),
+                )
 
-                    await page.goto(url)
-                    # Leave site?
-                    # Changes you made may not be saved.
-                    # https://stackoverflow.com/questions/64569446/can-i-ignore-the-leave-site-dialog-when-browsing-headless-using-puppeteer
-                    # await page.evaluate("window.onbeforeunload = null")
-                    if depth > 0:
-                        links = await self.extract_links(page)
-                        for link in links:
-                            await crawl_queue.put((link, depth - 1))
-                    # Отправляем все формы
-                    await self.send_all_forms(page)
-                    # Ждем пока запросы отправтся
-                    # Не советуют использовать
-                    # await page.wait_for_load_state("networkidle")
-                    await page.wait_for_timeout(3000)
-                finally:
-                    await page.close(run_before_unload=True)
+                await page.goto(url)
+                if depth > 0:
+                    links = await self.extract_links(page)
+                    for link in links:
+                        await crawl_queue.put((link, depth - 1))
+                # Отправляем все формы
+                await self.submit_forms(page)
+                # Ждем пока запросы отправтся
+                # await page.wait_for_load_state("networkidle")
+                await page.wait_for_timeout(3000)
             except PlaywrightTimeoutError:
                 self.log.warn("crawl timed out")
+            except PlaywrightError as ex:
+                self.log.warn(ex)
             except Exception as ex:
                 self.log.exception(ex)
             finally:
                 crawl_queue.task_done()
 
     @asynccontextmanager
-    async def get_http_client(self) -> typ.AsyncIterator[aiohttp.ClientSession]:
-        tim = aiohttp.ClientTimeout(total=15.0)
-        async with aiohttp.ClientSession(timeout=tim) as client:
-            yield client
-
-    def inject(
-        self,
-        params: dict | None,
-        data: dict | None,
-        cookies: dict | None,
-    ) -> typ.Iterator[
-        tuple[dict | None, dict | None, dict | None, dict | None]
-    ]:
-        for i in params or ():
-            cp = params.copy()
-            cp[i] += QUOTES
-            yield cp, data, cookies
-        # Данные могут быть как отправлеными через форму (только строки) так и типизированными (json)
-        for k, v in (data or {}).items():
-            if isinstance(v, (int, float, bool)):
-                v = str(v).lower()
-            elif not isinstance(v, str):
-                continue
-            cp = data.copy()
-            cp[k] = v + QUOTES
-            yield params, cp, cookies
-        for i in cookies or "":
-            cp = cookies.copy()
-            cp[i] += QUOTES
-            yield params, data, cp
+    async def get_session(self) -> typ.AsyncIterator[aiohttp.ClientSession]:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=15.0)
+        ) as session:
+            yield session
 
     def hash_request(
         self,
         method: str,
         url: str,
         params: dict | None,
-        cookies: dict,
         data: dict | None,
-        data_type: str,
+        json: dict | None,
     ) -> str:
-        # POST|https://www.linux.org.ru/ajax_login_process||JSESSIONID,tz,CSRF_TOKEN|nick,passwd,csrf|application/x-www-form-urlencoded
         return "|".join(
             ",".join(set(v)) if isinstance(v, dict) else [v, ""][v is None]
             for k, v in locals().items()
@@ -285,32 +237,61 @@ class SQLiCrawler:
     #         fd.add_field(name, value)
     #     return fd
 
+    def inject(self, *args: dict | None) -> typ.Iterator[tuple[dict, ...]]:
+        for index, data in enumerate(args):
+            if not data:
+                continue
+            for k, v in data.items():
+                if v is None:
+                    v = "null"
+                elif isinstance(v, (int, float, bool)):
+                    v = str(v).lower()
+                elif not isinstance(v, str):
+                    continue
+                copy = data.copy()
+                copy[k] = v + QUOTES
+                yield *args[:index], copy, *args[index + 1 :]
+
     async def check_sqli(
         self,
-        check_queue: asyncio.Queue[InterceptedRequest],
+        check_queue: asyncio.Queue[CheckRequest],
         seen_requests: set[str],
     ) -> None:
-        async with self.get_http_client() as http_client:
+        async with self.get_session() as session:
             while True:
                 req = await check_queue.get()
-                try:
-                    method, url, cookies, headers, data = req
-                    params = None
-                    if not data:
-                        url, params = parse_query_params(url)
 
-                        if not params:
-                            self.log.debug("no parameters")
+                try:
+                    method, url, headers, body = req
+                    method = method.upper()
+                    url, _ = urldefrag(url)
+                    sp = urlsplit(url)
+                    url = sp._replace(query="").geturl()
+                    params = dict(parse_qsl(sp.query))
+                    data = json = None
+
+                    if body:
+                        mime = MimeType.parse(headers.pop("content-type", 0))
+                        if mime.type == "application/x-www-form-urlencoded":
+                            data = dict(parse_qsl(body))
+                        elif mime.type == "application/json":
+                            json = jsonlib.loads(body)
+                        else:
+                            self.log.warn(
+                                "unknown or unexpected mime type: %s", mime.type
+                            )
                             continue
+
+                    if not params and not data and not json:
+                        self.log.warn("nothing to check")
 
                     # Уменьшаем количество запросов
                     req_hash = self.hash_request(
                         method,
                         url,
                         params,
-                        cookies,
                         data,
-                        req.mime_type,
+                        json,
                     )
 
                     if req_hash in seen_requests:
@@ -319,23 +300,26 @@ class SQLiCrawler:
 
                     seen_requests.add(req_hash)
 
-                    for params, data, cookies in itertools.islice(
-                        self.inject(params, data, cookies), 0, self.req_checks
+                    cookies = None
+
+                    if cookie := headers.pop("cookie", 0):
+                        d = SimpleCookie()
+                        d.load(cookie)
+                        cookies = {k: v.value for k, v in d.items()}
+
+                    for params, data, json in itertools.islice(
+                        self.inject(params, data, json), 0, self.req_checks
                     ):
                         self.log.debug(
                             f"check sqli: {method=}, {url=}, {params=}, {data=}, {cookies=}"
                         )
 
-                        response = await http_client.request(
+                        response = await session.request(
                             method,
                             url,
                             params=params,
-                            data=(
-                                data
-                                if data and req.is_forn_urlencoded
-                                else None
-                            ),
-                            json=[None, data][bool(data and req.is_json)],
+                            data=data,
+                            json=json,
                             cookies=cookies,
                             headers=headers,
                         )
@@ -352,27 +336,32 @@ class SQLiCrawler:
                         self.log.info(
                             "sqli detected: [%s] %s; see output", method, url
                         )
+
                         res = {
                             "method": method,
                             "url": url,
-                            "status_code": response.status,
                             "params": params,
-                            "cookies": cookies,
                             "headers": req.headers,
+                            "cookies": cookies,
                             "data": data,
-                            "data_type": req.mime_type,
+                            "json": json,
                             "match": match[0],
+                            "status": response.status,
                         }
+
                         js = jsonlib.dumps(
                             {k: v for k, v in res.items() if v},
                             ensure_ascii=False,
                         )
-                        self.output.write(js)
+
+                        self.output.write(js + os.linesep)
                         self.output.flush()
                         await self.squeal()
                         break
                 except asyncio.TimeoutError:
                     self.log.warn("check sqli timed out")
+                except aiohttp.ClientError as ex:
+                    self.log.warn(ex)
                 except Exception as ex:
                     self.log.exception(ex)
                 finally:

@@ -12,15 +12,11 @@ class ColorHandler(logging.StreamHandler):
         "DEBUG": termcolor.BLUE,
     }
 
-    @property
-    def isatty(self) -> bool:
-        return getattr(self.stream, "isatty", lambda: False)()
-
     _fmt = logging.Formatter("[%(levelname).1s] %(message)s")
 
     def format(self, record: logging.LogRecord) -> str:
         message = self._fmt.format(record)
-        if self.isatty and (
+        if getattr(self.stream, "isatty", lambda: False)() and (
             color := self._logging_colors.get(record.levelname)
         ):
             return f"{color}{message}{termcolor.RESET}"

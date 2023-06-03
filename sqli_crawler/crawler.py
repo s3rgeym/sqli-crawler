@@ -436,8 +436,8 @@ class SQLiCrawler:
         for t in checkers:
             t.cancel()
 
-        self.log.info("seen urls: %d", len(seen_urls))
-        self.log.info("checked requests: %d", len(seen_requests))
+        self.log.info("crawled: %d", len(seen_urls))
+        self.log.info("checked: %d", len(seen_requests))
 
     @classmethod
     def parse_args(cls, argv: typ.Sequence[str] | None) -> argparse.Namespace:

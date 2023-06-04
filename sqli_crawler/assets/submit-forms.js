@@ -110,7 +110,7 @@
             field.value = choice(lastNames)
           } else {
             let tag = choice(soTags)
-            field.value = tag.length >= 5 ? tag : (tag + '1234').slice(0, 5)
+            field.value = tag.padEnd(6, tag)
           }
           break
         case 'TEXTAREA':

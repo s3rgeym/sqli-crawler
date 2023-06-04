@@ -104,9 +104,9 @@
               Math.random().toString(36).slice(2) +
               '@' +
               choice(['gmail.com', 'yahoo.com', 'outlook.com'])
-          } else if (/^fisrt_?name$/i.test(field.name)) {
+          } else if (/fisrt[-_]?name/i.test(field.name)) {
             field.value = choice(firstNames)
-          } else if (/^(last|second)_?name$/i.test(field.name)) {
+          } else if (/(last|second)[-_]?name/i.test(field.name)) {
             field.value = choice(lastNames)
           } else {
             let tag = choice(soTags)

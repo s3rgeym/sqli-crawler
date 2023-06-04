@@ -275,7 +275,8 @@ class SQLiCrawler:
                             continue
 
                     if not params and not data and not json:
-                        self.log.warn("nothing to check")
+                        self.log.debug("nothing to check")
+                        continue
 
                     # Уменьшаем количество запросов
                     req_hash = self.hash_request(
@@ -450,7 +451,7 @@ class SQLiCrawler:
             "--crawl-per-host",
             help="max links to crawl per host",
             type=int,
-            default=50,
+            default=100,
         )
         parser.add_argument(
             "--num-crawlers",

@@ -7,7 +7,7 @@ class ColorHandler(logging.StreamHandler):
     _logging_colors = {
         "CRITICAL": termcolor.RED,
         "ERROR": termcolor.RED,
-        "WARNING": termcolor.YELLOW,
+        "WARNING": termcolor.RED,
         "INFO": termcolor.GREEN,
         "DEBUG": termcolor.BLUE,
     }

@@ -81,6 +81,10 @@
     'Vladimir Putin',
     'Barack Obama',
     'Mohammed Ali',
+    'Home Simpson',
+    'Mickey Mouse',
+    'Ronald McDonald',
+    'Cowboy Bebop',
   ]
 
   const firstNames = []

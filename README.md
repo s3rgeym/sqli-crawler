@@ -113,6 +113,8 @@ aiohttp.client_exceptions.ClientOSError: Cannot write to closing transport
 aiohttp.client_exceptions.ClientOSError: Cannot write to closing transport
 ```
 
+Если количество краулеров задано как `25`, то количество вкладок будет минимум 26, так как стартовая вкладка не управляется, и до закрытия старой страницы успевает открытьяс новая, те максимальное количество вкладок будет 25 \* 2 + 1?
+
 Initiator пока не реализован.
 
 https://github.com/microsoft/playwright/issues/16326

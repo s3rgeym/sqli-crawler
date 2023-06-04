@@ -80,6 +80,7 @@ class SQLiCrawler:
         self.log = logging.getLogger(__name__)
         self.log.setLevel(log_level)
         self.log.addHandler(ColorHandler())
+        self.lock = asyncio.Lock()
 
     async def squeal(self) -> None:
         """say something on ukrainian"""
@@ -166,39 +167,30 @@ class SQLiCrawler:
                 seen_urls.add(url)
                 seen_hosts[host] += 1
 
-                # вкладки иногда зависают и остаются открытыми, что может уронить браузер...
-                # закрываем лишние вкладки
-                # run_before_unload=True нужно чтобы закрыть вкладку без подтверждения Leave
-                # >>> list(range(15))[:-10]
-                # [0, 1, 2, 3, 4]
-                await asyncio.gather(
-                    *(
-                        p.close(run_before_unload=True)
-                        for p in context.pages[: -self.num_crawlers]
-                    ),
-                    return_exceptions=True,
-                )
+                try:
+                    # открываем новую страницу
+                    page = await context.new_page()
+                    self.log.debug("open pages: %d", len(context.pages))
 
-                # открываем новую страницу
-                page = await context.new_page()
+                    await page.route(
+                        "**/*",
+                        lambda route, request: asyncio.create_task(
+                            self.handle_route(route, request, page, check_queue)
+                        ),
+                    )
 
-                await page.route(
-                    "**/*",
-                    lambda route, request: asyncio.create_task(
-                        self.handle_route(route, request, page, check_queue)
-                    ),
-                )
-
-                await page.goto(url)
-                if depth > 0:
-                    links = await self.extract_links(page)
-                    for link in links:
-                        await crawl_queue.put((link, depth - 1))
-                # Отправляем все формы
-                await self.submit_forms(page)
-                # Ждем пока запросы отправтся
-                # await page.wait_for_load_state("networkidle")
-                await page.wait_for_timeout(3000)
+                    await page.goto(url)
+                    if depth > 0:
+                        links = await self.extract_links(page)
+                        for link in links:
+                            await crawl_queue.put((link, depth - 1))
+                    # Отправляем все формы
+                    await self.submit_forms(page)
+                    # Ждем пока запросы отправтся
+                    # await page.wait_for_load_state("networkidle")
+                    await page.wait_for_timeout(3000)
+                finally:
+                    await page.close(run_before_unload=True)
             except PlaywrightTimeoutError:
                 self.log.warn("crawl timed out")
             except PlaywrightError as ex:
@@ -311,7 +303,7 @@ class SQLiCrawler:
                         self.inject(params, data, json), 0, self.req_checks
                     ):
                         self.log.debug(
-                            f"check sqli: {method=}, {url=}, {params=}, {data=}, {cookies=}"
+                            f"check sqli: {method=}, {url=}, {params=}, {data=}, {json=}, {cookies=}"
                         )
 
                         response = await session.request(
@@ -383,6 +375,8 @@ class SQLiCrawler:
 
             context = await browser.new_context()
             context.set_default_navigation_timeout(15_000)
+
+            # context.on("page", self.handle_page)
 
             seen_urls = set()
             seen_hosts = Counter()

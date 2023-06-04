@@ -2,7 +2,7 @@
   const choice = arr => arr[(Math.random() * arr.length) | 0]
 
   // https://stackoverflow.com/tags
-  // $$('.post-tag').map(a => a.innerText).filter(a => /^[a-z]{3,}$/.test(a))
+  // $$('.post-tag').map(a => a.innerText).filter(a => /^[a-z]+$/.test(a))
   const soTags = [
     'javascript',
     'python',
@@ -15,8 +15,10 @@
     'ios',
     'sql',
     'mysql',
+    'r',
     'reactjs',
     'arrays',
+    'c',
     'json',
     'swift',
     'django',
@@ -73,6 +75,22 @@
     'He begged me for it, I had to fuck his ass until the sperm poured.',
   ]
 
+  const fullNames = [
+    'Adam Smith',
+    'Adolf Hitler',
+    'Vladimir Putin',
+    'Barack Obama',
+    'Mohammed Ali',
+  ]
+
+  const firstNames = []
+  const lastNames = []
+  for (let name of fullNames) {
+    let words = name.split(' ')
+    firstNames.push(words.shift())
+    lastNames.push(words.join(' '))
+  }
+
   function fillAndSubmit(form) {
     for (let field of form.elements) {
       if (field.value) continue
@@ -83,11 +101,16 @@
             field.value = '!123456qW'
           } else if (/email/i.test(field.name)) {
             field.value =
-              Math.random().toString(36).slice(2, 8) +
+              Math.random().toString(36).slice(2) +
               '@' +
               choice(['gmail.com', 'yahoo.com', 'outlook.com'])
+          } else if (/^fisrt_?name$/i.test(field.name)) {
+            field.value = choice(firstNames)
+          } else if (/^(last|second)_?name$/i.test(field.name)) {
+            field.value = choice(lastNames)
           } else {
-            field.value = choice(soTags)
+            let tag = choice(soTags)
+            field.value = tag.length >= 5 ? tag : (tag + '1234').slice(0, 5)
           }
           break
         case 'TEXTAREA':

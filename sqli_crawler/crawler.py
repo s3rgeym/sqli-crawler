@@ -262,7 +262,7 @@ class SQLiCrawler:
                 try:
                     method, url, headers, body = req
                     method = method.upper()
-                    # url, _ = urldefrag(url)
+                    url, _ = urldefrag(url)
                     sp = urlsplit(url)
                     url = sp._replace(query="").geturl()
                     params = dict(parse_qsl(sp.query))

@@ -18,7 +18,7 @@ from urllib.parse import parse_qsl, urldefrag, urlsplit
 
 import aiohttp
 from aiohttp.client import ClientResponse
-from playwright.async_api import Browser, BrowserContext
+from playwright.async_api import Browser, BrowserContext, Dialog
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Page, Request, Route
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
@@ -179,6 +179,12 @@ class SQLiCrawler:
                         ),
                     )
 
+                    async def handle_popup(popup: Page) -> None:
+                        await popup.close()
+
+                    # Оборабатывает не всплывающие окна, а открытие в новой вкладке
+                    await page.on("popup", handle_popup)
+
                     await page.goto(url)
                     if depth > 0:
                         links = await self.extract_links(page)
@@ -190,7 +196,7 @@ class SQLiCrawler:
                     # await page.wait_for_load_state("networkidle")
                     await page.wait_for_timeout(3000)
                 finally:
-                    await page.close(run_before_unload=True)
+                    await page.close()
             except PlaywrightTimeoutError:
                 self.log.warn("crawl timed out")
             except PlaywrightError as ex:
@@ -256,7 +262,7 @@ class SQLiCrawler:
                 try:
                     method, url, headers, body = req
                     method = method.upper()
-                    url, _ = urldefrag(url)
+                    # url, _ = urldefrag(url)
                     sp = urlsplit(url)
                     url = sp._replace(query="").geturl()
                     params = dict(parse_qsl(sp.query))
@@ -378,6 +384,13 @@ class SQLiCrawler:
             context.set_default_navigation_timeout(15_000)
 
             # context.on("page", self.handle_page)
+
+            # Нужно ли?
+            # Подтверждаем диалог
+            async def handle_dialog(dialog: Dialog) -> None:
+                await dialog.accept()
+
+            context.on("dialog", handle_dialog)
 
             seen_urls = set()
             seen_hosts = Counter()

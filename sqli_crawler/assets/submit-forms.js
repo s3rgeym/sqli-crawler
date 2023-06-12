@@ -91,6 +91,7 @@
 
   const firstNames = []
   const lastNames = []
+  
   for (let name of fullNames) {
     let words = name.split(' ')
     firstNames.push(words.shift())

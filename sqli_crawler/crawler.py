@@ -308,19 +308,20 @@ class SQLiCrawler:
                     data = json = None
 
                     if body:
-                        mime = MimeType.parse(headers.pop("content-type", 0))
-                        if mime.type == "application/x-www-form-urlencoded":
-                            data = dict(parse_qsl(body))
-                        elif mime.type == "application/json":
-                            json = jsonlib.loads(body)
-                        elif mime.type == "multipart/form-data":
-                            boundary = mime.params.get("boundary")
-                            data = self.parse_multipart(body, boundary)
-                        else:
-                            self.log.warn(
-                                "unknown or unexpected mime type: %s", mime.type
-                            )
-                            continue
+                        mime = MimeType.parse(headers.pop("content-type", ""))
+                        match mime.type:
+                            case "application/x-www-form-urlencoded":
+                                data = dict(parse_qsl(body))
+                            case "application/json":
+                                json = jsonlib.loads(body)
+                            case "multipart/form-data":
+                                boundary = mime.params.get("boundary")
+                                data = self.parse_multipart(body, boundary)
+                            case _:
+                                self.log.warn(
+                                    "unknown or unexpected mime type: %s", _
+                                )
+                                continue
 
                     if not params and not data and not json:
                         self.log.debug("nothing to check")

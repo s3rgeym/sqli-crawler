@@ -80,7 +80,7 @@
     'Adolf Hitler',
     'Vladimir Putin',
     'Xi Jinping',
-    'Barack Obama',
+    'Joe Biden',
     'Mohammed Ali',
     'Eric Cartman',
     'Homer Simpson',
@@ -105,18 +105,21 @@
           if (field.type === 'hidden' || field.type === 'file') continue
           if (field.type === 'password') {
             field.value = '!123456qW'
+          } else if (field.type === 'number') {
+            field.value = 42
+          } else if (field.name.toLowerCase().includes('url')) {
+            field.value = 'https://www.linux.org.ru/'
           } else if (/email/i.test(field.name)) {
-            field.value =
-              Math.random().toString(36).slice(2) +
-              '@' +
-              choice(['gmail.com', 'yahoo.com', 'outlook.com'])
+            field.value = `u${ (Math.random() * 90000 | 0) + 10000 }@${ choice(['gmail.com', 'yahoo.com', 'outlook.com']) }`
           } else if (/fisrt[-_]?name/i.test(field.name)) {
             field.value = choice(firstNames)
           } else if (/(last|second)[-_]?name/i.test(field.name)) {
             field.value = choice(lastNames)
-          } else {
+          } else if (/user_?name|login/i.test(field.name)) {
             let tag = choice(soTags)
             field.value = tag.padEnd(6, tag)
+          } else {
+            field.value = Math.random().toString(36).slice(2)
           }
           break
         case 'TEXTAREA':

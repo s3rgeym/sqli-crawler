@@ -172,18 +172,18 @@ class SQLiCrawler:
                     page = await context.new_page()
                     self.log.debug("open pages: %d", len(context.pages))
 
+                    async def handle_popup(popup: Page) -> None:
+                        await popup.close()
+
+                    # Оборабатывает не всплывающие окна, а открытие в новой вкладке
+                    page.on("popup", handle_popup)
+
                     await page.route(
                         "**/*",
                         lambda route, request: asyncio.create_task(
                             self.handle_route(route, request, page, check_queue)
                         ),
                     )
-
-                    async def handle_popup(popup: Page) -> None:
-                        await popup.close()
-
-                    # Оборабатывает не всплывающие окна, а открытие в новой вкладке
-                    await page.on("popup", handle_popup)
 
                     await page.goto(url)
                     if depth > 0:

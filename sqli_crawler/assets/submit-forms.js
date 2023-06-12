@@ -115,7 +115,7 @@
             field.value = choice(firstNames)
           } else if (/(last|second)[-_]?name/i.test(field.name)) {
             field.value = choice(lastNames)
-          } else if (/user_?name|login/i.test(field.name)) {
+          } else if (/user[-_]?name|login/i.test(field.name)) {
             let tag = choice(soTags)
             field.value = tag.padEnd(6, tag)
           } else {

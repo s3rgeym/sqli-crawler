@@ -1,4 +1,4 @@
-;(D => {
+;((doc, win, undef) => {
   const choice = arr => arr[(Math.random() * arr.length) | 0]
 
   // https://stackoverflow.com/tags
@@ -143,7 +143,7 @@
     form.submit()
   }
 
-  for (let i of D.forms) {
+  for (let i of doc.forms) {
     fillAndSubmit(i)
   }
-})(document)
+})(window.document, window)

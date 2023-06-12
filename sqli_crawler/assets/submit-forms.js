@@ -1,4 +1,4 @@
-;(doc => {
+;(D => {
   const choice = arr => arr[(Math.random() * arr.length) | 0]
 
   // https://stackoverflow.com/tags
@@ -91,7 +91,7 @@
 
   const firstNames = []
   const lastNames = []
-  
+
   for (let name of fullNames) {
     let words = name.split(' ')
     firstNames.push(words.shift())
@@ -107,11 +107,20 @@
           if (field.type === 'password') {
             field.value = '!123456qW'
           } else if (field.type === 'number') {
-            field.value = 42
-          } else if (field.name.toLowerCase().includes('url')) {
+            field.value = (Math.random() * 1000) | 0
+          } else if (
+            field.type === 'url' ||
+            field.name.toLowerCase().includes('url')
+          ) {
             field.value = 'https://www.linux.org.ru/'
           } else if (/email/i.test(field.name)) {
-            field.value = `u${ (Math.random() * 90000 | 0) + 10000 }@${ choice(['gmail.com', 'yahoo.com', 'outlook.com']) }`
+            // На случай если проверка чтобы email начинался с буквы
+            // Много где запрещено регистрироваться с иных почтовиков кроме популярных
+            field.value = `u${((Math.random() * 90000) | 0) + 10000}@${choice([
+              'gmail.com',
+              'yahoo.com',
+              'outlook.com',
+            ])}`
           } else if (/fisrt[-_]?name/i.test(field.name)) {
             field.value = choice(firstNames)
           } else if (/(last|second)[-_]?name/i.test(field.name)) {
@@ -134,7 +143,7 @@
     form.submit()
   }
 
-  for (let f of doc.forms) {
-    fillAndSubmit(f)
+  for (let i of D.forms) {
+    fillAndSubmit(i)
   }
 })(document)

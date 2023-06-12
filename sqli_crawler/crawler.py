@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
+import email
 import itertools
 import json as jsonlib
 import logging
@@ -12,6 +14,7 @@ from collections import Counter
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from http.cookies import SimpleCookie
+from io import BytesIO, StringIO
 from os import getenv
 from pathlib import Path
 from urllib.parse import parse_qsl, urldefrag, urlsplit
@@ -25,7 +28,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
 
 from .color_log import ColorHandler
-from .utils import MimeType, normalize_url
+from .utils import MimeType, json_dumps, normalize_url
 
 ASSETS_PATH = Path(__file__).resolve().parent / "assets"
 
@@ -154,6 +157,13 @@ class SQLiCrawler:
             try:
                 host = urlsplit(url).netloc
 
+                if host.lower().endswith((".ru", ".su", ".by")):
+                    self.log.warn(
+                        "skip: %s. Try to attack the website of the Seim of Latvia or the Rada of Ukraine instead",
+                        host,
+                    )
+                    continue
+
                 if (
                     (depth < 0)
                     or (url in seen_urls)
@@ -173,6 +183,7 @@ class SQLiCrawler:
                     self.log.debug("open pages: %d", len(context.pages))
 
                     async def handle_popup(popup: Page) -> None:
+                        self.log.debug("close: %s", popup.url)
                         await popup.close()
 
                     # Оборабатывает не всплывающие окна, а открытие в новой вкладке
@@ -227,13 +238,41 @@ class SQLiCrawler:
             if k != "self"
         )
 
-    # def get_form_data(self, data: dict | None) -> aiohttp.FormData | None:
-    #     if not data:
-    #         return
-    #     fd = aiohttp.FormData()
-    #     for name, value in data.items():
-    #         fd.add_field(name, value)
-    #     return fd
+    def parse_multipart(
+        self, post_body: str, boundary: str
+    ) -> dict[str, typ.Any]:
+        sio = StringIO()
+        sio.writelines(
+            [
+                "MIME-Version: 1.0\r\n",
+                f'Content-Type: multipart/mixed; boundary="{boundary}"\r\n\r\n',
+                post_body,
+            ]
+        )
+        sio.seek(0)
+        msg = email.message_from_file(sio)
+        rv = {}
+        # msg.is_multipart()
+        for part in msg.get_payload():
+            name = part.get_param("name", header="content-disposition")
+            value = part.get_payload(decode=True).decode()
+            if filename := part.get_param(
+                "filename",
+                header="content-disposition",
+            ):
+                # Chrome DevTools Protocol возвращает тело файла в base64
+                value = BytesIO(base64.b64decode(value))
+                value.name = filename
+            rv[name] = value
+        return rv
+
+    def get_form_data(self, data: dict | None) -> aiohttp.FormData | None:
+        if not data:
+            return
+        fd = aiohttp.FormData()
+        for name, value in data.items():
+            fd.add_field(name, value, filename=getattr(value, "name", None))
+        return fd
 
     def inject(self, *args: dict | None) -> typ.Iterator[tuple[dict, ...]]:
         for index, data in enumerate(args):
@@ -274,6 +313,9 @@ class SQLiCrawler:
                             data = dict(parse_qsl(body))
                         elif mime.type == "application/json":
                             json = jsonlib.loads(body)
+                        elif mime.type == "multipart/form-data":
+                            boundary = mime.params.get("boundary")
+                            data = self.parse_multipart(body, boundary)
                         else:
                             self.log.warn(
                                 "unknown or unexpected mime type: %s", mime.type
@@ -348,12 +390,9 @@ class SQLiCrawler:
                             "status": response.status,
                         }
 
-                        js = jsonlib.dumps(
-                            {k: v for k, v in res.items() if v},
-                            ensure_ascii=False,
-                        )
-
-                        self.output.write(js + os.linesep)
+                        js = json_dumps({k: v for k, v in res.items() if v})
+                        self.output.write(js)
+                        self.output.write(os.linesep)
                         self.output.flush()
                         await self.squeal()
                         break

@@ -121,9 +121,9 @@
               'yahoo.com',
               'outlook.com',
             ])}`
-          } else if (/fisrt[-_]?name/i.test(field.name)) {
+          } else if (/((first|given)[-_]?|fore)name/i.test(field.name)) {
             field.value = choice(firstNames)
-          } else if (/(last|second)[-_]?name/i.test(field.name)) {
+          } else if (/((last|family)[-_]?|sur)name/i.test(field.name)) {
             field.value = choice(lastNames)
           } else if (/user[-_]?name|login/i.test(field.name)) {
             let tag = choice(soTags)

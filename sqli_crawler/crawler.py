@@ -353,7 +353,7 @@ class SQLiCrawler:
                         self.inject(params, data, json), 0, self.req_checks
                     ):
                         self.log.debug(
-                            f"check sqli: {method=}, {url=}, {params=}, {data=}, {json=}, {cookies=}"
+                            f"check sqli: {method=}, {url=}, {params=}, {data=}, {json=}, {headers=}, {cookies=}"
                         )
 
                         response = await session.request(
@@ -362,8 +362,8 @@ class SQLiCrawler:
                             params=params,
                             data=data,
                             json=json,
-                            cookies=cookies,
                             headers=headers,
+                            cookies=cookies,
                         )
 
                         # >>> open('/dev/urandom', 'rb').read(10).decode(errors='ignore')

